@@ -1,7 +1,8 @@
 mod support;
 
 use rawpipe::{ImageSource, Pipeline};
-use rawler::RawImageData;
+use rawler::{Orientation, RawImageData};
+use support::{verify_real_sample, SampleExpectation};
 
 // Generated 16x16 grayscale gradient, stored as IEEE-float LinearRaw. It has no
 // WhiteLevel or DefaultCrop tags, so it also exercises the float defaults.
@@ -38,4 +39,25 @@ fn float_linear_dng_renders_a_gradient() {
     assert!(dark.0 < 40, "left edge should be dark, got {:?}", dark);
     assert!(middle.0 > dark.0 + 50, "middle {:?} should be brighter than left {:?}", middle, dark);
     assert!(bright.0 > 220, "right edge should be bright, got {:?}", bright);
+}
+
+#[test]
+fn float_cfa_dng_real_sample() {
+    verify_real_sample(&SampleExpectation {
+        sample: "sample1.float.dng",
+        raw_dims: (5920, 3950),
+        out_dims: (5796, 3870),
+        cpp: 1,
+        is_float: true,
+        is_linear_raw: false,
+        cfa: "RGGB",
+        black_levels: [2047.0, 2047.0, 2048.0, 2047.0],
+        white_levels: [15488.0; 4],
+        orientation: Some(Orientation::Normal),
+        preview: Some((5796, 3870)),
+        thumbnail: Some((256, 171)),
+        scale_max: (320, 320),
+        scale_out: (320, 213),
+        min_range: 150,
+    });
 }

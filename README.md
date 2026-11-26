@@ -63,15 +63,16 @@ let image = pipeline.output_8bit(Some(&cache))?;
 ## 测试
 
 ```sh
-cargo test            # 58 个用例
+cargo test            # 69 个用例
 ```
 
 | 测试 | 内容 |
 | --- | --- |
 | `decode_formats_test` | 23 个样片逐个出图（尺寸、非黑、亮度），全部按需下载 |
+| `decode_extra_formats_test` | `.ari`/`.crm`/`.dcs`/`.fff`/`.mef`/`.ori`/`.qtk`/多种 `.raw`(Naked)/`.arq`/`.sti`：宽高、非黑非平、CFA/色彩矩阵/黑白电平、EXIF 方向、preview/thumbnail、限尺寸缩放与异常文件防 panic |
 | `preview_test` | 内嵌 preview/thumbnail（X3F/CR2/CR3/NEF/PEF/RAF/RW2 尺寸）与缺失文件报错 |
 | `decode_dng_test` | 运行时生成的 CFA DNG：相位跟随裁剪、相位旋转、渲染不退化、黑电平覆盖 |
-| `decode_float_test` | 运行时生成的浮点 LinearRaw DNG（16×16 渐变，无 WhiteLevel/DefaultCrop） |
+| `decode_float_test` | 运行时生成的浮点 LinearRaw DNG（16×16 渐变，无 WhiteLevel/DefaultCrop）与真实 32-bit 浮点 CFA DNG（`cpp=1`）全链路验证 |
 | `demosaic_test` | 2×8 与 12×12 CFA 图案的 full / scaled demosaic |
 | `color_conversions_test` | 满量程颜色转换往返 |
 | `orientation_test` | 8 种 EXIF 方向的缓冲区改写 |
@@ -80,31 +81,29 @@ cargo test            # 58 个用例
 
 样片：
 
-- 样片不纳入版本库。`res/` 是本地缓存（已加入 `.gitignore`）；测试发现文件缺失或 BLAKE3 校验不符时，会按 `tests/support/mod.rs` 的清单从 [raw.pixls.us](https://raw.pixls.us/) 下载并校验。
-- 首次运行需要网络和 `curl`，会下载约 500 MB；可用 `RAWPIPE_SAMPLE_DIR` 指定其他缓存目录。
+- 样片不纳入版本库。`res/` 是本地缓存（已加入 `.gitignore`）；测试发现文件缺失或 BLAKE3 校验不符时，会按 `tests/support/mod.rs` 的清单从 [raw.pixls.us](https://raw.pixls.us/) 及对应公开测试源下载并校验。
+- 首次运行需要网络和 `curl`（完整跑完含 `.crm` 约 3 GB）；可用 `RAWPIPE_SAMPLE_DIR` 指定其他缓存目录。
 - 需要特定 DNG 元数据的测试（`decode_dng_test` / `decode_float_test`）在运行时生成极小的合成 DNG（`synthetic_cfa.<pid>.dng`、`synthetic_float.<pid>.dng`），仓库不包含任何样片文件。
 
 ## 格式覆盖
 
-当前覆盖 rawler 25 个解码器中的 20 个（下面按扩展名列出，其中 `rwl` 与 `rw2` 共用同一个解码器）：
+当前已覆盖 rawler 全部 25 个解码器（下面按扩展名列出，其中 `rwl` 与 `rw2` 共用同一个解码器，`fff` 与 `3fr` 共用，`ori` 与 `orf` 共用，`crm` 与 `cr3` 共用，`arq` 与 `arw` 共用）：
 
 ```
-cr2 cr3 dng nef nrw orf pef raf rw2 rwl arw srw mrw crw iiq tfr(3fr) kdc dcr erf mos x3f
+ari arq cr2 cr3 crm dng nef nrw orf ori pef raf rw2 rwl arw srw mrw crw iiq tfr(3fr/fff) kdc dcr dcs erf mef mos nkd(raw) qtk sti x3f
 ```
 
-已覆盖的数据形态：Bayer 2×2（含 BGGR/GRBG）、X-Trans 6×6、单色 DNG（`cpp=1 && !cfa`）、
-LinearRaw 3 通道（sRAW CR2）、Foveon（Merrill 12-bit / Quattro 14-bit，含 Quattro 插值）、浮点 DNG、逐通道黑电平、奇数裁剪相位、`crop_area` 缺失、
-EXIF 方向（单元测试覆盖全部 8 种，真实文件覆盖 Rotate90）、2×8 / 12×12 CFA（合成图案）。
+已覆盖的数据形态：Bayer 2×2（含 RGGB/BGGR/GRBG/GBRG）、X-Trans 6×6、单色 DNG（`cpp=1 && !cfa`）、
+LinearRaw 3 通道（sRAW CR2、PixelShift ARQ）、Foveon（Merrill 12-bit / Quattro 14-bit，含 Quattro 插值）、浮点 DNG（LinearRaw 与 `cpp=1` CFA）、逐通道黑电平、奇数裁剪相位、`crop_area` 缺失、
+EXIF 方向（单元测试覆盖全部 8 种，真实文件覆盖 Normal / Rotate90 / Rotate180）、2×8 / 12×12 CFA（合成图案）。
 
-未覆盖的解码器：`ari`、`dcs`、`mef`、`nkd`、`qtk`。其中 MEF 在 raw.pixls.us 只有非 CC0 样片。
+注：QuickTake 200 机内实际输出 JPEG 而非专有 `.qtk` 原始格式，rawler 中亦无 QuickTake 200 相机配置；`decode_extra_formats_test` 对 QuickTake 100/150 做真实解码校验，并对 QuickTake 200 特征头做错误拒绝（无 panic）校验。MEF 样片在 raw.pixls.us 为非 CC0（CC-BY-NC-SA）。
 
 ## 待办
 
 按优先级排列，完成后删除对应条目。修复在个人 fork [michael-eddy/dnglab](https://github.com/michael-eddy/dnglab) 上进行并提交；rawpipe 不做 vendored 补丁。
 
-1. **浮点 CFA DNG（`cpp=1` 浮点）未验证** — 需要样片；找到后再判断是否需要上游修复。
-2. **rawler 依赖未钉版本** — `Cargo.lock` 被忽略、依赖跟随 fork 的 `main`；修复稳定后应固定 `rev`。
-3. **缺失解码器的样片** — `ari` / `dcs` / `nkd` / `qtk` 无 CC0 样片；MEF 样片非 CC0。
+1. **rawler 依赖未钉版本** — `Cargo.lock` 被忽略、依赖跟随 fork 的 `main`；修复稳定后应固定 `rev`。
 
 ## 目录
 

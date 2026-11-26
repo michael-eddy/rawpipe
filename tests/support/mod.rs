@@ -10,11 +10,16 @@
 #![allow(dead_code)]
 
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, Read};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+
+use rawler::rawimage::RawPhotometricInterpretation;
+use rawler::{Orientation, RawImageData};
+use rawpipe::{ImageSource, Pipeline, Rotation};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static FLOAT_DNG: OnceLock<PathBuf> = OnceLock::new();
@@ -44,6 +49,25 @@ const SAMPLES: &[(&str, &str, &str)] = &[
     ("sample2.cr2", "https://raw.pixls.us/getfile.php/129/nice/Canon%20-%20EOS%207D%20-%20sRAW2%20%28sRAW%29%20%283:2%29.CR2", "2a3caa56bbf1d06b70b8efc5cd74bdec065a3e243e074928b22af47720d947ac"),
     ("sample2.dng", "https://raw.pixls.us/getfile.php/1087/nice/Leica%20-%20M%20Monochrom%20%28Typ%20246%29%20-%2012bit%20%283:2%29.DNG", "f5a6aaa90b4f36ee37638289c89acc4d30cd60e563a77dc5aa23070e1d96df74"),
     ("sample2.x3f", "https://raw.pixls.us/getfile.php/2494/nice/Sigma%20-%20sd%20Quattro%20H%20-%203:2.X3F", "cf6ba7d07fa45618248d567eedb20cb8c1775b0437acf17699cad6e8d4301ac1"),
+    ("sample1.ari", "https://raw.pixls.us/getfile.php/3497/nice/Arri%20-%20Alexa%20Mini.ari", "3953e4c6735758e594e5f5c88a758702ebf4f2dd75e74f8c16411ed77581d05c"),
+    ("sample1.crm", "https://8kraw-resources.oss-cn-shanghai.aliyuncs.com/ISO100.CRM", "da239fa4972ac70079eaea7f517a7afc2664cfa2b7a8d350df4a72d9bb8f5271"),
+    ("sample1.dcs", "https://raw.pixls.us/getfile.php/2573/nice/Kodak%20-%20DCS520C%20-%2012bit%20%283:2%29.TIF", "92b9b7284ae129b0ec09475a9e879412e283581355f8c91b6ab38db3a7a3b97a"),
+    ("sample2.dcs", "https://raw.pixls.us/getfile.php/2465/nice/Kodak%20-%20EOS%20DCS%203%20-%208bit%20%284:3%29.TIF", "db54636adbd05b2ae5bb3a9ae850e04d491d3340a20443b248108e202f1e425c"),
+    ("sample1.fff", "https://raw.pixls.us/getfile.php/1640/nice/Hasselblad%20-%20H5D-40%20-%2016bit%20%284:3%29.fff", "890012a018f8ae950d449cd7828e6de999ac786e7d8ccc3cf56ac82c5c566ded"),
+    ("sample1.mef", "https://raw.pixls.us/getfile.php/562/nice/Mamiya%20-%20ZD.MEF", "a8f2ef02800563a1bf7d6d7683eaea06db5d9c8109530b684f797cfbbe1bfff9"),
+    ("sample1.ori", "https://raw.pixls.us/getfile.php/2857/nice/Olympus%20-%20E-M5%20Mark%20II%20-%2016bit%2016bit%20%22normal%22%20%284:3%29.ORI", "1e978477a0e36b33caf13e58d9eafd073596457c736d206291d169697c5a8bc9"),
+    ("sample2.ori", "https://raw.pixls.us/getfile.php/7798/nice/OM%20System%20-%20OM-3%20-%2016bit%20%284:3%29.ORI", "74ab5375bf92a788c22478449d5142a2147c2927a240d16e2c1f76523a07c949"),
+    ("sample1.qtk", "https://raw.githubusercontent.com/colinleroy/a2tools/main/src/quicktake/tests/QKTK/Image__1.qtk", "2ab45a0ca8c885e641db78f24f7514ea99a09cf5546f225cf2944213dd354dec"),
+    ("sample2.qtk", "https://raw.githubusercontent.com/colinleroy/a2tools/main/src/quicktake/tests/QKTK/IMAGE01.QTK", "7a3eb03b0b665ec5a2615315c80442066fde2dbafa660249b37f19597d128549"),
+    ("sample3.qtk", "https://raw.githubusercontent.com/colinleroy/a2tools/main/src/quicktake/tests/QKTN/TEST150.QTK", "dcc276f16c0bbbf379c3502232028323213ce2dd5a54c80dcd9d369fe60715d0"),
+    ("sample1.s3is.raw", "https://raw.pixls.us/getfile.php/1765/nice/Canon%20-%20Canon%20PowerShot%20S3IS.CRW", "46ff75398a5c70c60be11b1990e44b02ff619492663fc257ec5ed8937706684e"),
+    ("sample2.a720is.raw", "https://raw.pixls.us/getfile.php/2881/nice/Canon%20-%20Powershot%20A720IS.CRW", "a173b2fde24dea3154990f2975963df3068637dd38f1aa87f565b938e38c9b13"),
+    ("sample3.d10.raw", "https://raw.pixls.us/getfile.php/1267/nice/Canon%20-%20PowerShot%20D10.CRW", "9dd43fa63b3362123b72f3f664b5355b57c1e51d9a41bb0bdb5e3efe1f9c48be"),
+    ("sample4.g7x.raw", "https://raw.pixls.us/getfile.php/1274/nice/Canon%20-%20PowerShot%20G7%20X.CRW", "c635187d3845bd72a4a79b35a4c48955d9e5a1048ed9afe9c87dd74132bf47b0"),
+    ("sample5.sx710hs.raw", "https://raw.pixls.us/getfile.php/2926/nice/Canon%20-%20PowerShot%20SX710%20HS%20-%20CHDK%20ver.%201.5.0.CRW", "8a21f8c30393bff5611bf9c6a7a2ea4daf67056b40d7c6c999de56e2e25d2d57"),
+    ("sample1.arq", "https://raw.pixls.us/getfile.php/3255/nice/Sony%20-%20ILCE-7RM3%20-%2014bit%2014bit%20uncompressed%20%283:2%29.ARQ", "fe2274dd70d84cb012cb5dac4d011118ceb766789523ac2e2ce18e29a91a8f76"),
+    ("sample1.sti", "https://raw.pixls.us/getfile.php/6942/nice/Sinarback%20-%20Sinarback%20eVolution%2075%2C%20Sinar%20p3%20/%20f3%20-%2016bit%20%284:3%29.sti", "f7fcf2577285e20311a0fd9e95cc1bbc8435480e2df99755a5025b060de2dc5f"),
+    ("sample1.float.dng", "https://raw.pixls.us/getfile.php/883/nice/Canon%20-%20EOS%205D%20Mark%20III%20-%2032bit%2032bit%20RAW.dng", "ad236d8b3836daa2e9ce001290c5d461a9408e02f4699941fa3b0f0b67abd4f1"),
 ];
 
 fn manifest_entry(name: &str) -> (&'static str, &'static str) {
@@ -299,4 +323,353 @@ fn synthetic_cfa_dng_impl() -> PathBuf {
         tag(50778, TYPE_SHORT, 1, shorts(&[21])),
     ];
     write_generated("synthetic_cfa", &build_tiff(tags, pixels))
+}
+
+// ---------------------------------------------------------------------------
+// Real RAW sample verification helpers
+// ---------------------------------------------------------------------------
+
+pub struct SampleExpectation {
+    pub sample: &'static str,
+    pub raw_dims: (usize, usize),
+    pub out_dims: (usize, usize),
+    pub cpp: usize,
+    pub is_float: bool,
+    pub is_linear_raw: bool,
+    pub cfa: &'static str,
+    pub black_levels: [f32; 4],
+    pub white_levels: [f32; 4],
+    pub orientation: Option<Orientation>,
+    pub preview: Option<(u32, u32)>,
+    pub thumbnail: Option<(u32, u32)>,
+    pub scale_max: (usize, usize),
+    pub scale_out: (usize, usize),
+    pub min_range: u8,
+}
+
+fn shift_cfa(pattern: &str, x: usize, y: usize) -> String {
+    let chars: Vec<char> = pattern.chars().collect();
+    if chars.len() != 4 {
+        return pattern.to_string();
+    }
+    let at = |row: usize, col: usize| chars[((row + y) % 2) * 2 + (col + x) % 2];
+    [at(0, 0), at(0, 1), at(1, 0), at(1, 1)].into_iter().collect()
+}
+
+fn expected_rotation(orient: Option<Orientation>) -> (Rotation, bool, bool) {
+    match orient {
+        None | Some(Orientation::Normal) => (Rotation::Normal, false, false),
+        Some(Orientation::VerticalFlip) => (Rotation::Normal, false, true),
+        Some(Orientation::HorizontalFlip) => (Rotation::Normal, true, false),
+        Some(Orientation::Rotate180) => (Rotation::Rotate180, false, false),
+        Some(Orientation::Transpose) => (Rotation::Rotate90, false, true),
+        Some(Orientation::Rotate90) => (Rotation::Rotate90, false, false),
+        Some(Orientation::Rotate270) => (Rotation::Rotate270, false, false),
+        Some(Orientation::Transverse) => (Rotation::Rotate270, true, false),
+    }
+}
+
+fn same_rotation(a: Rotation, b: Rotation) -> bool {
+    matches!(
+        (a, b),
+        (Rotation::Normal, Rotation::Normal)
+            | (Rotation::Rotate90, Rotation::Rotate90)
+            | (Rotation::Rotate180, Rotation::Rotate180)
+            | (Rotation::Rotate270, Rotation::Rotate270)
+    )
+}
+
+fn assert_matrix_finite_and_nonzero<const R: usize, const C: usize>(
+    name: &str,
+    sample: &str,
+    matrix: &[[f32; C]; R],
+) {
+    for (row_idx, row) in matrix.iter().enumerate() {
+        assert!(
+            row.iter().all(|v| v.is_finite()),
+            "{sample}: {name}[{row_idx}] has non-finite values: {row:?}"
+        );
+        if row_idx < 3 {
+            assert!(
+                row.iter().any(|v| v.abs() > 1e-6),
+                "{sample}: {name}[{row_idx}] is all zero: {row:?}"
+            );
+        }
+    }
+}
+
+fn assert_image_not_black_or_flat(label: &str, data: &[u8], min_range: u8) {
+    assert!(!data.is_empty(), "{label}: empty pixel buffer");
+    let min = *data.iter().min().unwrap();
+    let max = *data.iter().max().unwrap();
+    assert!(
+        max - min >= min_range,
+        "{label}: flat/black image (min={min}, max={max}, required range>={min_range})"
+    );
+    let pixels = (data.len() / 3) as u64;
+    let lit = data.chunks_exact(3).filter(|p| p.iter().any(|&v| v > 16)).count() as u64;
+    assert!(lit * 2 > pixels, "{label}: only {lit} of {pixels} pixels are lit (>16)");
+
+    let mean = data.iter().map(|&v| v as f64).sum::<f64>() / data.len() as f64;
+    let variance = data
+        .iter()
+        .map(|&v| {
+            let d = v as f64 - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / data.len() as f64;
+    assert!(
+        variance.sqrt() > 4.0,
+        "{label}: image variance too low (mean={mean:.2}, std={:.2})",
+        variance.sqrt()
+    );
+}
+
+fn assert_embedded_image(
+    kind: &str,
+    sample: &str,
+    actual: Option<image::DynamicImage>,
+    expected: Option<(u32, u32)>,
+) {
+    match (actual, expected) {
+        (Some(img), Some(exp)) => {
+            assert_eq!((img.width(), img.height()), exp, "{sample}: {kind} size");
+            let rgb = img.to_rgb8();
+            let raw = rgb.as_raw();
+            let min = *raw.iter().min().unwrap();
+            let max = *raw.iter().max().unwrap();
+            assert!(max > min, "{sample}: {kind} is flat ({min}..={max})");
+        }
+        (None, None) => {}
+        (got, exp) => panic!(
+            "{sample}: {kind} mismatch: got {:?}, expected {:?}",
+            got.map(|i| (i.width(), i.height())),
+            exp
+        ),
+    }
+}
+
+/// Call every public file-reading entry point inside `catch_unwind` and ensure
+/// none of them panic on malformed input.
+pub fn assert_file_ops_do_not_panic(path: &Path, context: &str) {
+    for (op, res) in [
+        (
+            "Pipeline::new_from_file",
+            catch_unwind(AssertUnwindSafe(|| Pipeline::new_from_file(path).map(|_| ()))),
+        ),
+        (
+            "decode_8bit",
+            catch_unwind(AssertUnwindSafe(|| rawpipe::decode_8bit(path, 320, 320).map(|_| ()))),
+        ),
+        (
+            "preview",
+            catch_unwind(AssertUnwindSafe(|| rawpipe::preview(path).map(|_| ()))),
+        ),
+        (
+            "thumbnail",
+            catch_unwind(AssertUnwindSafe(|| rawpipe::thumbnail(path).map(|_| ()))),
+        ),
+    ] {
+        assert!(res.is_ok(), "{context}: {op} panicked on {}", path.display());
+    }
+}
+
+pub fn assert_corrupt_variants_do_not_panic(source_path: &Path, sample: &str) {
+    let dir = std::env::temp_dir().join(format!(
+        "rawpipe_bad_{}_{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&dir).unwrap();
+
+    let file_len = fs::metadata(source_path).unwrap().len() as usize;
+    let prefix_len = file_len.min(512 * 1024);
+    let mut prefix = vec![0u8; prefix_len];
+    {
+        let mut f = File::open(source_path).unwrap();
+        f.read_exact(&mut prefix).unwrap();
+    }
+
+    // Truncated prefixes: empty, tiny, header-level, and payload-level
+    let mut cut_lengths = vec![0usize, 16, 512, 4096];
+    if file_len <= 1024 * 1024 {
+        cut_lengths.push(file_len / 2);
+    } else {
+        cut_lengths.push(prefix_len);
+    }
+
+    for len in cut_lengths {
+        let slice = &prefix[..prefix.len().min(len)];
+        let bad = dir.join(format!("{sample}.trunc_{len}.bad"));
+        fs::write(&bad, slice).unwrap();
+        assert_file_ops_do_not_panic(&bad, &format!("{sample} trunc={len}"));
+        if len <= 16 {
+            assert!(
+                Pipeline::new_from_file(&bad).is_err(),
+                "{sample}: trunc={len} should fail to load"
+            );
+        }
+        let _ = fs::remove_file(&bad);
+    }
+
+    // Corrupted header bytes on a non-empty prefix
+    if prefix.len() >= 64 {
+        let mut corrupt = prefix;
+        for byte in &mut corrupt[..64] {
+            *byte ^= 0xFF;
+        }
+        let bad = dir.join(format!("{sample}.corrupt_hdr.bad"));
+        fs::write(&bad, &corrupt).unwrap();
+        assert_file_ops_do_not_panic(&bad, &format!("{sample} corrupt_hdr"));
+        let _ = fs::remove_file(&bad);
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+pub fn verify_real_sample(spec: &SampleExpectation) {
+    let path = sample_path(spec.sample);
+
+    // 1. Load & verify metadata (CFA, colour matrix, black/white levels, orientation)
+    let mut pipeline = Pipeline::new_from_file(&path)
+        .unwrap_or_else(|e| panic!("{}: failed to load: {}", spec.sample, e));
+
+    match &pipeline.context.image {
+        ImageSource::Raw(raw) => {
+            assert_eq!((raw.width, raw.height), spec.raw_dims, "{}: raw dims", spec.sample);
+            assert_eq!(raw.cpp, spec.cpp, "{}: cpp", spec.sample);
+            assert_eq!(
+                matches!(raw.data, RawImageData::Float(_)),
+                spec.is_float,
+                "{}: float data kind",
+                spec.sample
+            );
+            if spec.is_linear_raw {
+                assert!(
+                    matches!(raw.photometric, RawPhotometricInterpretation::LinearRaw),
+                    "{}: expected LinearRaw, got {:?}",
+                    spec.sample,
+                    raw.photometric
+                );
+            } else {
+                assert!(
+                    matches!(raw.photometric, RawPhotometricInterpretation::Cfa(_)),
+                    "{}: expected Cfa photometric, got {:?}",
+                    spec.sample,
+                    raw.photometric
+                );
+            }
+
+            assert_eq!(raw.camera.cfa.to_string(), spec.cfa, "{}: CFA", spec.sample);
+            assert!(raw.camera.cfa.is_valid(), "{}: CFA should be valid", spec.sample);
+            assert!(pipeline.ops.to_float.is_cfa, "{}: to_float.is_cfa", spec.sample);
+
+            let expected_demosaic_cfa = shift_cfa(
+                spec.cfa,
+                pipeline.ops.to_float.crop_left % 2,
+                pipeline.ops.to_float.crop_top % 2,
+            );
+            assert_eq!(
+                pipeline.ops.demosaic.cfa, expected_demosaic_cfa,
+                "{}: phase-shifted demosaic CFA",
+                spec.sample
+            );
+
+            assert!(raw.best_color_matrix().is_some(), "{}: missing best_color_matrix", spec.sample);
+            assert_matrix_finite_and_nonzero("cam_to_xyz", spec.sample, &pipeline.ops.to_lab.cam_to_xyz);
+            assert_matrix_finite_and_nonzero(
+                "cam_to_xyz_normalized",
+                spec.sample,
+                &pipeline.ops.to_lab.cam_to_xyz_normalized,
+            );
+            assert_matrix_finite_and_nonzero("xyz_to_cam", spec.sample, &pipeline.ops.to_lab.xyz_to_cam);
+
+            for i in 0..4 {
+                assert!(
+                    (pipeline.ops.to_float.black_levels[i] - spec.black_levels[i]).abs() < 0.01,
+                    "{}: black_levels[{}] = {}, expected {}",
+                    spec.sample,
+                    i,
+                    pipeline.ops.to_float.black_levels[i],
+                    spec.black_levels[i]
+                );
+                assert!(
+                    (pipeline.ops.to_float.white_levels[i] - spec.white_levels[i]).abs() < 0.01,
+                    "{}: white_levels[{}] = {}, expected {}",
+                    spec.sample,
+                    i,
+                    pipeline.ops.to_float.white_levels[i],
+                    spec.white_levels[i]
+                );
+                if i < spec.cpp.max(1) || !spec.is_linear_raw {
+                    assert!(
+                        pipeline.ops.to_float.white_levels[i] > pipeline.ops.to_float.black_levels[i],
+                        "{}: white <= black at channel {}",
+                        spec.sample,
+                        i
+                    );
+                }
+            }
+
+            assert_eq!(raw.orientation, spec.orientation, "{}: EXIF orientation", spec.sample);
+            let (exp_rot, exp_fh, exp_fv) = expected_rotation(spec.orientation);
+            assert!(
+                same_rotation(pipeline.ops.orientation.rotation, exp_rot),
+                "{}: OpOrientation rotation {:?} != {:?}",
+                spec.sample,
+                pipeline.ops.orientation.rotation,
+                exp_rot
+            );
+            assert_eq!(
+                (
+                    pipeline.ops.orientation.flip_horizontal,
+                    pipeline.ops.orientation.flip_vertical
+                ),
+                (exp_fh, exp_fv),
+                "{}: orientation flips",
+                spec.sample
+            );
+        }
+        ImageSource::Raster(_) => panic!("{}: expected raw image", spec.sample),
+    }
+
+    // 2. Full decode: output dimensions + non-black / non-flat
+    let image = pipeline
+        .output_8bit(None)
+        .unwrap_or_else(|e| panic!("{}: output_8bit failed: {}", spec.sample, e));
+    assert_eq!((image.width, image.height), spec.out_dims, "{}: output dims", spec.sample);
+    assert_eq!(image.data.len(), image.width * image.height * 3, "{}: data len", spec.sample);
+    assert_image_not_black_or_flat(spec.sample, &image.data, spec.min_range);
+
+    // 3. Embedded preview & thumbnail
+    let pv = rawpipe::preview(&path)
+        .unwrap_or_else(|e| panic!("{}: preview failed: {}", spec.sample, e));
+    assert_embedded_image("preview", spec.sample, pv, spec.preview);
+    let th = rawpipe::thumbnail(&path)
+        .unwrap_or_else(|e| panic!("{}: thumbnail failed: {}", spec.sample, e));
+    assert_embedded_image("thumbnail", spec.sample, th, spec.thumbnail);
+
+    // 4. decode_8bit max_width / max_height scaling
+    let scaled = rawpipe::decode_8bit(&path, spec.scale_max.0, spec.scale_max.1)
+        .unwrap_or_else(|e| panic!("{}: decode_8bit scaling failed: {}", spec.sample, e));
+    assert_eq!(
+        (scaled.width, scaled.height),
+        spec.scale_out,
+        "{}: scaled dims for max {:?}",
+        spec.sample,
+        spec.scale_max
+    );
+    assert!(
+        scaled.width <= spec.scale_max.0 && scaled.height <= spec.scale_max.1,
+        "{}: scaled {:?} exceeds max {:?}",
+        spec.sample,
+        (scaled.width, scaled.height),
+        spec.scale_max
+    );
+    assert_eq!(scaled.data.len(), scaled.width * scaled.height * 3);
+    assert_image_not_black_or_flat(&format!("{} scaled", spec.sample), &scaled.data, spec.min_range / 2);
+
+    // 5. Malformed / truncated / corrupted files must not panic
+    assert_corrupt_variants_do_not_panic(&path, spec.sample);
 }
