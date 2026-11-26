@@ -1,0 +1,20 @@
+[package]
+name = "rawpipe"
+edition = "2021"
+version = "0.1.0"
+license = "LGPL-2.1-only"
+
+[dependencies]
+log = "0.4.35"
+blake3 = "1.8.7"
+rayon = "1.12.0"
+image = "0.25.10"
+multicache = "0.6.1"
+num-traits = "0.2.19"
+serde_yaml = "0.9.33"
+serde = { version = "1.0.229", features = ["derive"] }
+rawler = { git = "https://github.com/michael-eddy/dnglab" }
+postcard = { version = "1.2", default-features = false, features = ["use-std"] }
+
+[profile.dev]
+opt-level = 3
